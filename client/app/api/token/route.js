@@ -1,8 +1,6 @@
 import { NextResponse } from "next/server";
 import { randomUUID } from "crypto";
 import { AccessToken } from "livekit-server-sdk";
-import { getApps, initializeApp, cert } from "firebase-admin/app";
-import { getAuth } from "firebase-admin/auth";
 
 // firebase-admin + livekit-server-sdk need the Node runtime (not Edge).
 export const runtime = "nodejs";
@@ -13,32 +11,39 @@ const API_SECRET = process.env.LIVEKIT_API_SECRET;
 const LIVEKIT_URL =
   process.env.LIVEKIT_URL || process.env.NEXT_PUBLIC_LIVEKIT_URL || "";
 
-// Lazily init Firebase Admin once per serverless instance. Returns the Auth
-// service, or null when no service account is configured (=> unverified guests).
+// firebase-admin is imported lazily (dynamic import) so a bundling/runtime
+// issue with it can never crash the route at import time — guests and the
+// LiveKit token mint keep working even if Admin is unavailable.
 let adminAuth = null;
-function getAdminAuth() {
+let adminTried = false;
+async function getAdminAuth() {
   if (adminAuth) return adminAuth;
+  if (adminTried) return null;
+  adminTried = true;
   const projectId = process.env.FIREBASE_PROJECT_ID;
   const clientEmail = process.env.FIREBASE_CLIENT_EMAIL;
   const privateKey = process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, "\n");
+  if (!(projectId && clientEmail && privateKey)) return null;
   try {
+    const { getApps, initializeApp, cert } = await import("firebase-admin/app");
+    const { getAuth } = await import("firebase-admin/auth");
     if (!getApps().length) {
-      if (!(projectId && clientEmail && privateKey)) return null;
       initializeApp({ credential: cert({ projectId, clientEmail, privateKey }) });
     }
     adminAuth = getAuth();
     return adminAuth;
   } catch (err) {
-    console.error("Firebase Admin init failed:", err.message);
+    console.error("Firebase Admin init failed:", err?.message || err);
     return null;
   }
 }
 
 export async function GET() {
+  const auth = await getAdminAuth();
   return NextResponse.json({
     ok: true,
     livekit: Boolean(API_KEY && API_SECRET),
-    adminReady: Boolean(getAdminAuth()),
+    adminReady: Boolean(auth),
   });
 }
 
@@ -60,7 +65,7 @@ export async function POST(req) {
     let displayName = (typeof name === "string" && name.trim()) || "";
 
     if (idToken) {
-      const auth = getAdminAuth();
+      const auth = await getAdminAuth();
       if (auth) {
         try {
           const decoded = await auth.verifyIdToken(idToken);
