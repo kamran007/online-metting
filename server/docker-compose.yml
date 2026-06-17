@@ -1,0 +1,36 @@
+# SFU + Caddy (TLS reverse proxy) for a VPS with a public IP and a domain.
+#
+# Both use host networking so mediasoup's UDP media ports and the ws port bind
+# directly on the host (publishing a large UDP range via -p is extremely slow).
+#
+# Required in ./.env on the VPS:
+#   ANNOUNCED_IP=<your VPS public IP>
+#   CLIENT_ORIGIN=https://your-app.vercel.app
+#   SFU_DOMAIN=sfu.yourdomain.com
+#   PORT=4000  RTC_MIN_PORT=40000  RTC_MAX_PORT=40100
+# Leave SSL_CERT_FILE/SSL_KEY_FILE UNSET — Caddy handles TLS.
+#
+# Firewall: open 80/tcp + 443/tcp (Caddy) and 40000-40100/udp (media).
+# Do NOT expose 4000 publicly — Caddy reaches it on localhost.
+
+services:
+  sfu:
+    build: .
+    network_mode: host
+    restart: unless-stopped
+    env_file: ./.env
+
+  caddy:
+    image: caddy:2
+    network_mode: host
+    restart: unless-stopped
+    environment:
+      - SFU_DOMAIN=${SFU_DOMAIN}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile
+      - caddy_data:/data
+      - caddy_config:/config
+
+volumes:
+  caddy_data:
+  caddy_config:

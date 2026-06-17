@@ -1,0 +1,6 @@
+# Caddy terminates TLS and reverse-proxies the WebSocket signaling to the SFU.
+# It auto-obtains a Let's Encrypt cert for $SFU_DOMAIN. WebSocket upgrades are
+# proxied transparently. (RTC media is UDP straight to the host, not via Caddy.)
+{$SFU_DOMAIN} {
+	reverse_proxy localhost:4000
+}

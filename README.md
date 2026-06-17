@@ -70,27 +70,35 @@ Defaults that matter for local:
 Two pieces deploy to two places — the SFU **cannot** run on Vercel (it needs a
 stateful process, a public IP, and an open UDP range).
 
-### 1. SFU → a VPS (DigitalOcean / Hetzner / EC2 …)
+### 1. SFU → a VPS (DigitalOcean / Hetzner / EC2 …) with `docker compose`
+
+`server/docker-compose.yml` runs the SFU **and Caddy** (auto Let's Encrypt TLS,
+reverse-proxying `wss://` → the SFU's ws). Media (UDP) goes straight to the host.
 
 ```bash
-# on the VPS
-docker build -t meet-sfu ./server
-docker run -d --name meet-sfu \
-  -p 4000:4000 \
-  -p 40000-40100:40000-40100/udp \
-  -e ANNOUNCED_IP=<YOUR_VPS_PUBLIC_IP> \
-  -e CLIENT_ORIGIN=https://your-app.vercel.app \
-  -e RTC_MIN_PORT=40000 -e RTC_MAX_PORT=40100 \
-  meet-sfu
+# DNS first: A record  sfu.yourdomain.com  ->  <VPS public IP>
+
+# on the VPS (Docker + compose plugin installed)
+git clone <your repo> && cd <repo>/server
+cp .env.example .env
+# edit .env:
+#   ANNOUNCED_IP=<VPS public IP>
+#   CLIENT_ORIGIN=https://your-app.vercel.app
+#   SFU_DOMAIN=sfu.yourdomain.com
+#   (leave SSL_CERT_FILE/SSL_KEY_FILE commented — Caddy does TLS)
+
+# firewall: signaling/TLS + media
+sudo ufw allow 80,443/tcp
+sudo ufw allow 40000:40100/udp
+
+docker compose up -d --build
 ```
 
-- **Open the firewall**: TCP `4000` (signaling) + UDP `40000-40100` (media).
-- **`ANNOUNCED_IP` must be the public IP** clients reach — without it ICE fails.
-- **wss/TLS**: browsers on an HTTPS page can only open `wss://`. Put **nginx or
-  Caddy** in front of port 4000 to terminate TLS (recommended), or set
-  `SSL_CERT_FILE`/`SSL_KEY_FILE`. Then the public URL is `wss://sfu.yourdomain.com`.
-- *(Optional)* Firebase Admin: set `FIREBASE_PROJECT_ID` / `FIREBASE_CLIENT_EMAIL` /
-  `FIREBASE_PRIVATE_KEY` to verify Google identities server-side.
+- **`ANNOUNCED_IP` must be the VPS public IP** — without it ICE fails.
+- Do **not** open port 4000 publicly; Caddy reaches it on localhost.
+- Verify: `https://sfu.yourdomain.com/health` → `{"ok":true}`.
+- *(Optional)* Firebase Admin: add `FIREBASE_PROJECT_ID` / `FIREBASE_CLIENT_EMAIL` /
+  `FIREBASE_PRIVATE_KEY` to `.env` to verify Google identities server-side.
 
 ### 2. Client → Vercel
 
