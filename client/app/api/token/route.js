@@ -21,12 +21,17 @@ function getAdminAuth() {
   const projectId = process.env.FIREBASE_PROJECT_ID;
   const clientEmail = process.env.FIREBASE_CLIENT_EMAIL;
   const privateKey = process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, "\n");
-  if (!getApps().length) {
-    if (!(projectId && clientEmail && privateKey)) return null;
-    initializeApp({ credential: cert({ projectId, clientEmail, privateKey }) });
+  try {
+    if (!getApps().length) {
+      if (!(projectId && clientEmail && privateKey)) return null;
+      initializeApp({ credential: cert({ projectId, clientEmail, privateKey }) });
+    }
+    adminAuth = getAuth();
+    return adminAuth;
+  } catch (err) {
+    console.error("Firebase Admin init failed:", err.message);
+    return null;
   }
-  adminAuth = getAuth();
-  return adminAuth;
 }
 
 export async function GET() {
