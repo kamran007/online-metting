@@ -8,18 +8,28 @@ import {
   VideoConference,
   formatChatMessageLinks,
 } from "@livekit/components-react";
+import { VideoPresets } from "livekit-client";
 
 // Same-origin Next API route by default; override only for the standalone server.
 const TOKEN_ENDPOINT =
   process.env.NEXT_PUBLIC_TOKEN_ENDPOINT || "/api/token";
 
-// High-performance publish/subscribe defaults handled by the SFU.
+// Tuned for large rooms (~50 participants). The client cost is dominated by how
+// many streams it must encode/decode, so:
+//  - cap capture at 540p and publish only low+mid simulcast layers (cheap uplink)
+//  - h264: hardware decode on virtually every device => low CPU when many tiles
+//  - adaptiveStream + pagination => the browser only decodes the VISIBLE tiles
+//  - dynacast => SFU stops sending layers nobody is viewing
 const ROOM_OPTIONS = {
-  adaptiveStream: true, // subscribe at the resolution each tile actually needs
-  dynacast: true, // pause layers nobody is viewing
+  adaptiveStream: true,
+  dynacast: true,
+  videoCaptureDefaults: {
+    resolution: VideoPresets.h540.resolution,
+  },
   publishDefaults: {
-    simulcast: true, // multiple quality layers for the SFU to pick from
-    videoCodec: "vp9",
+    simulcast: true,
+    videoCodec: "h264",
+    videoSimulcastLayers: [VideoPresets.h180, VideoPresets.h360],
     red: true, // audio redundancy for packet-loss resilience
     dtx: true, // discontinuous transmission (silence) saves bandwidth
   },
