@@ -1,0 +1,31 @@
+{
+  "name": "video-meeting-client",
+  "version": "2.0.0",
+  "private": true,
+  "engines": {
+    "node": ">=18.18"
+  },
+  "scripts": {
+    "dev": "next dev",
+    "dev:lan": "next dev --experimental-https -H 0.0.0.0",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint"
+  },
+  "dependencies": {
+    "@livekit/components-react": "^2.9.21",
+    "@livekit/components-styles": "^1.2.0",
+    "firebase": "^12.15.0",
+    "firebase-admin": "^14.0.0",
+    "livekit-client": "^2.19.2",
+    "livekit-server-sdk": "^2.15.4",
+    "next": "^16.2.9",
+    "react": "^19.2.7",
+    "react-dom": "^19.2.7"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4.3.1",
+    "postcss": "^8.4.49",
+    "tailwindcss": "^4.3.1"
+  }
+}

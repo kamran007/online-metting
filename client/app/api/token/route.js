@@ -1,0 +1,97 @@
+import { NextResponse } from "next/server";
+import { randomUUID } from "crypto";
+import { AccessToken } from "livekit-server-sdk";
+import { getApps, initializeApp, cert } from "firebase-admin/app";
+import { getAuth } from "firebase-admin/auth";
+
+// firebase-admin + livekit-server-sdk need the Node runtime (not Edge).
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+
+const API_KEY = process.env.LIVEKIT_API_KEY;
+const API_SECRET = process.env.LIVEKIT_API_SECRET;
+const LIVEKIT_URL =
+  process.env.LIVEKIT_URL || process.env.NEXT_PUBLIC_LIVEKIT_URL || "";
+
+// Lazily init Firebase Admin once per serverless instance. Returns the Auth
+// service, or null when no service account is configured (=> unverified guests).
+let adminAuth = null;
+function getAdminAuth() {
+  if (adminAuth) return adminAuth;
+  const projectId = process.env.FIREBASE_PROJECT_ID;
+  const clientEmail = process.env.FIREBASE_CLIENT_EMAIL;
+  const privateKey = process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, "\n");
+  if (!getApps().length) {
+    if (!(projectId && clientEmail && privateKey)) return null;
+    initializeApp({ credential: cert({ projectId, clientEmail, privateKey }) });
+  }
+  adminAuth = getAuth();
+  return adminAuth;
+}
+
+export async function GET() {
+  return NextResponse.json({
+    ok: true,
+    livekit: Boolean(API_KEY && API_SECRET),
+    adminReady: Boolean(getAdminAuth()),
+  });
+}
+
+export async function POST(req) {
+  try {
+    if (!API_KEY || !API_SECRET) {
+      return NextResponse.json(
+        { error: "Server missing LIVEKIT_API_KEY / LIVEKIT_API_SECRET." },
+        { status: 500 }
+      );
+    }
+
+    const { room, name, idToken } = await req.json().catch(() => ({}));
+    if (!room || typeof room !== "string" || room.length > 128) {
+      return NextResponse.json({ error: "Valid 'room' is required." }, { status: 400 });
+    }
+
+    let identity;
+    let displayName = (typeof name === "string" && name.trim()) || "";
+
+    if (idToken) {
+      const auth = getAdminAuth();
+      if (auth) {
+        try {
+          const decoded = await auth.verifyIdToken(idToken);
+          identity = decoded.uid;
+          displayName = decoded.name || displayName || "User";
+        } catch {
+          return NextResponse.json(
+            { error: "Invalid or expired ID token." },
+            { status: 401 }
+          );
+        }
+      } else {
+        identity = `user-${randomUUID()}`;
+      }
+    } else {
+      identity = `guest-${randomUUID()}`;
+    }
+    if (!displayName) displayName = identity.startsWith("guest") ? "Guest" : "User";
+
+    const at = new AccessToken(API_KEY, API_SECRET, {
+      identity,
+      name: displayName,
+      ttl: "1h",
+    });
+    at.addGrant({
+      roomJoin: true,
+      room,
+      canPublish: true,
+      canSubscribe: true,
+      canPublishData: true,
+    });
+
+    const token = await at.toJwt();
+    return NextResponse.json({ token, url: LIVEKIT_URL, identity, name: displayName });
+  } catch (err) {
+    console.error("token route error:", err);
+    return NextResponse.json({ error: "Failed to mint token." }, { status: 500 });
+  }
+}
