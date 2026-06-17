@@ -16,6 +16,16 @@ export default function Home() {
   const router = useRouter();
   const [code, setCode] = useState("");
   const [guestName, setGuestName] = useState("");
+  const [authError, setAuthError] = useState(null);
+
+  const handleGoogle = async () => {
+    setAuthError(null);
+    try {
+      await signInWithGoogle();
+    } catch (e) {
+      setAuthError(`${e.code || "error"}: ${e.message || e}`);
+    }
+  };
 
   if (loading) {
     return (
@@ -34,12 +44,18 @@ export default function Home() {
             Secure video meetings in your browser.
           </p>
           <button
-            onClick={() => signInWithGoogle().catch(() => {})}
+            onClick={handleGoogle}
             className="mt-8 inline-flex w-full items-center justify-center gap-3 rounded-lg bg-white px-4 py-3 font-medium text-gray-800 transition hover:bg-gray-100"
           >
             <GoogleIcon />
             Sign in with Google
           </button>
+
+          {authError && (
+            <p className="mt-3 wrap-break-word text-left text-xs text-red-400">
+              {authError}
+            </p>
+          )}
 
           <div className="my-5 flex items-center gap-2">
             <div className="h-px flex-1 bg-white/10" />

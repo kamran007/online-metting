@@ -88,7 +88,11 @@ export default function RoomPage() {
       <Centered>
         <p className="mb-4 text-gray-300">Join this meeting</p>
         <button
-          onClick={() => signInWithGoogle().catch(() => {})}
+          onClick={() =>
+            signInWithGoogle().catch((e) =>
+              setError(`${e.code || "error"}: ${e.message || e}`)
+            )
+          }
           className="rounded-lg bg-blue-600 px-5 py-2.5 font-medium text-white hover:bg-blue-500"
         >
           Sign in with Google
