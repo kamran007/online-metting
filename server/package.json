@@ -1,22 +1,21 @@
 {
-  "name": "video-meeting-server",
-  "version": "2.0.0",
+  "name": "video-meeting-sfu",
+  "version": "3.0.0",
   "private": true,
-  "description": "LiveKit access-token issuer with optional Firebase ID-token verification",
+  "description": "Custom mediasoup SFU with wss signaling",
   "main": "index.js",
   "type": "module",
   "engines": {
-    "node": ">=18.17"
+    "node": ">=18.18"
   },
   "scripts": {
     "dev": "node --watch index.js",
     "start": "node index.js"
   },
   "dependencies": {
-    "cors": "^2.8.6",
     "dotenv": "^17.4.2",
-    "express": "^5.2.1",
     "firebase-admin": "^14.0.0",
-    "livekit-server-sdk": "^2.15.4"
+    "mediasoup": "^3.20.7",
+    "ws": "^8.21.0"
   }
 }

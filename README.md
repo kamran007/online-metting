@@ -1,117 +1,126 @@
 # Meet — Real-Time Video Meeting App
 
-Google Meet / Zoom–style web app. Sign in with Google (or join as a guest), create
-or join a room, and talk to many people at once. Media is routed through a
-**LiveKit SFU** (simulcast, dynacast, adaptive stream) for high performance.
-
-Ships as a **single Next.js app** — token minting runs in a serverless API route,
-so the whole thing deploys to **Vercel** with no separate backend.
+Google Meet / Zoom–style web app. Sign in with Google (or join as guest), create or
+join a room, talk to many people at once. Media is routed by a **custom mediasoup
+SFU** with **WebSocket (wss) signaling** — built from scratch, no third-party media
+service.
 
 ## Stack
 
-| Layer    | Tech                                                          |
-| -------- | ------------------------------------------------------------ |
-| Frontend | Next.js 16 (App Router, Turbopack), React 19, Tailwind v4    |
-| Media    | LiveKit SFU + `@livekit/components-react` / `livekit-client` |
-| Backend  | Next.js Route Handler `/api/token` (Node serverless function)|
-| Auth     | Firebase Authentication (Google) + Firebase Admin verify     |
+| Layer     | Tech                                                        |
+| --------- | ----------------------------------------------------------- |
+| Frontend  | Next.js 16 (App Router), React 19, Tailwind v4              |
+| Media     | WebRTC + **mediasoup SFU** + `mediasoup-client`             |
+| Signaling | Node.js + `ws` (raw WebSocket, custom RPC)                  |
+| Auth      | Firebase Authentication (Google) + optional Admin verify    |
 
-## Architecture
+## How it works
 
 ```
-browser (Next.js on Vercel)
+browser (mediasoup-client)
    │  1. Firebase Google sign-in (or guest)
-   │  2. POST /api/token { room, name, idToken }   ┌──────────────────────────┐
-   ├───────────────────────────────────────────────►  /api/token (serverless) │
-   │                                                │  • verify idToken (Admin)│
-   │  3. { token, url }                             │  • mint LiveKit JWT       │
-   │◄─────────────────────────────────────────────  └──────────────────────────┘
-   │  4. connect(token) ──────────► LiveKit SFU ◄────────── other participants
-                                    (media routing, simulcast, TURN, reconnect)
+   │  2. WebSocket connect: wss://sfu?roomId&name&token
+   ├──────────────────────────────────────────────►  SFU (Node + ws + mediasoup)
+   │     getRouterRtpCapabilities                     • 1 Router per room
+   │     createWebRtcTransport (send + recv)          • verifies Firebase token
+   │     produce(mic, cam)  ── RTP/UDP ─────────────► • receives each stream once
+   │     consume(others)    ◄─ RTP/UDP ─────────────  • forwards selectively (SFU)
 ```
 
-The API route **never touches media** — it verifies identity and mints a
-short-lived, room-scoped LiveKit token. The SFU does signaling, NAT traversal
-(built-in TURN), simulcast layer selection and reconnection.
+- **Signaling** (SDP/ICE/DTLS params, produce/consume) flows over the WebSocket.
+- **Media** (audio/video RTP) flows over UDP/SRTP directly between each browser and
+  the SFU — *not* over the WebSocket. Each client uploads its stream **once**; the
+  SFU forwards to everyone. This is what scales to ~50 (vs mesh's ~4).
+- Video is published with **3 simulcast layers** so the SFU can send a lower layer
+  to viewers who don't need full resolution.
 
-### Why an SFU (vs P2P mesh)
+## Repo layout
 
-Full-mesh sends each stream to every peer — `O(n²)` and it melts CPU/uplink past
-~4 people. An SFU receives one upstream per publisher and forwards selectively, so
-each client uploads **once**. With simulcast + dynacast it scales to dozens.
+| Path      | What                                                         |
+| --------- | ------------------------------------------------------------ |
+| `client/` | Next.js app (UI, auth, `useSfu` hook, `wsClient`). → Vercel. |
+| `server/` | mediasoup SFU + ws signaling. → a VPS (needs UDP + a public IP). |
 
 ## Prerequisites
 
 - Node.js 18.18+
 - A Firebase project (Google sign-in)
-- A LiveKit project — [LiveKit Cloud](https://cloud.livekit.io) free tier (or self-host)
 
-## Local setup
+## Local development
+
+mediasoup runs natively on Windows/macOS/Linux (prebuilt worker), so no Docker is
+needed locally.
 
 ```bash
-cp client/.env.local.example client/.env.local   # fill Firebase + LiveKit values
-npm install            # root (concurrently — optional)
-npm run install:all    # client (+ optional server)
-npm run dev            # Next app on http://localhost:3000  (API route included)
+cp client/.env.local.example client/.env.local   # Firebase config + NEXT_PUBLIC_WS_URL
+cp server/.env.example server/.env                # PORT, ANNOUNCED_IP=127.0.0.1, ...
+npm run install:all
+npm run dev        # SFU on ws://localhost:4000  +  client on http://localhost:3000
 ```
 
-Open <http://localhost:3000>, sign in, **New meeting**, share the code. No separate
-backend needed — `/api/token` runs inside the same dev server.
+Open <http://localhost:3000>, sign in, **New meeting**, share the code. For two
+local participants, open a second browser/profile to the same room URL.
 
-### Required env vars (`client/.env.local`)
+Defaults that matter for local:
+- `server/.env`: `ANNOUNCED_IP=127.0.0.1`, TLS off → `ws://`.
+- `client/.env.local`: `NEXT_PUBLIC_WS_URL=ws://localhost:4000` (must match).
 
-| Variable                          | Public? | Purpose                                   |
-| --------------------------------- | ------- | ----------------------------------------- |
-| `NEXT_PUBLIC_FIREBASE_*`          | yes     | Firebase web config (auth)                |
-| `NEXT_PUBLIC_LIVEKIT_URL`         | yes     | LiveKit `wss://` URL (client fallback)    |
-| `LIVEKIT_URL`                     | **no**  | LiveKit URL returned by the token route   |
-| `LIVEKIT_API_KEY`                 | **no**  | LiveKit API key (secret)                  |
-| `LIVEKIT_API_SECRET`              | **no**  | LiveKit API secret (secret)               |
-| `FIREBASE_PROJECT_ID` *(opt)*     | **no**  | Firebase Admin — verify Google identities |
-| `FIREBASE_CLIENT_EMAIL` *(opt)*   | **no**  | Firebase Admin service account            |
-| `FIREBASE_PRIVATE_KEY` *(opt)*    | **no**  | Firebase Admin private key (`\n`-escaped) |
+## Production deployment
 
-Without the `FIREBASE_*` admin vars the app still runs, but signed-in users are
-accepted without server-side verification (fine for dev; set them for production).
+Two pieces deploy to two places — the SFU **cannot** run on Vercel (it needs a
+stateful process, a public IP, and an open UDP range).
 
-## Deploy to Vercel
+### 1. SFU → a VPS (DigitalOcean / Hetzner / EC2 …)
 
-1. Push this repo to GitHub/GitLab.
-2. Vercel → **New Project** → import the repo.
-3. **Root Directory → `client`** (the Next app lives in `client/`, not the repo root).
-4. Framework preset auto-detects **Next.js**. Build command / output: defaults.
-5. **Settings → Environment Variables** — add every row from the table above
-   (the non-public ones especially). Paste `FIREBASE_PRIVATE_KEY` as one line with
-   literal `\n` escapes, or wrapped in quotes.
-6. **Deploy.**
-7. **Firebase console → Authentication → Settings → Authorized domains** → add your
-   Vercel domain (e.g. `your-app.vercel.app`) so the Google popup works there.
+```bash
+# on the VPS
+docker build -t meet-sfu ./server
+docker run -d --name meet-sfu \
+  -p 4000:4000 \
+  -p 40000-40100:40000-40100/udp \
+  -e ANNOUNCED_IP=<YOUR_VPS_PUBLIC_IP> \
+  -e CLIENT_ORIGIN=https://your-app.vercel.app \
+  -e RTC_MIN_PORT=40000 -e RTC_MAX_PORT=40100 \
+  meet-sfu
+```
 
-Vercel serves HTTPS automatically, so `getUserMedia` (camera/mic) works with no
-certificate setup. The `/api/token` route runs as a Node serverless function.
+- **Open the firewall**: TCP `4000` (signaling) + UDP `40000-40100` (media).
+- **`ANNOUNCED_IP` must be the public IP** clients reach — without it ICE fails.
+- **wss/TLS**: browsers on an HTTPS page can only open `wss://`. Put **nginx or
+  Caddy** in front of port 4000 to terminate TLS (recommended), or set
+  `SSL_CERT_FILE`/`SSL_KEY_FILE`. Then the public URL is `wss://sfu.yourdomain.com`.
+- *(Optional)* Firebase Admin: set `FIREBASE_PROJECT_ID` / `FIREBASE_CLIENT_EMAIL` /
+  `FIREBASE_PRIVATE_KEY` to verify Google identities server-side.
+
+### 2. Client → Vercel
+
+- Root Directory: `client`.
+- Env vars: the `NEXT_PUBLIC_FIREBASE_*` set, plus
+  `NEXT_PUBLIC_WS_URL=wss://sfu.yourdomain.com`.
+- Firebase → **Authentication → Authorized domains** → add `your-app.vercel.app`.
+
+> Until the SFU is reachable over `wss://`, the deployed client cannot connect a
+> call (it would try `ws://localhost:4000`). Local dev works as-is.
 
 ## Features
 
-- Google sign-in (Firebase) with verified server-side identity, or guest mode
-- Create a room (random code) or join by code
-- Multi-party audio/video via SFU — mute, camera, **screen share**, chat,
-  active-speaker focus, connection-quality indicators (LiveKit `VideoConference`)
-- Adaptive stream + dynacast + simulcast + audio RED/DTX
-- Automatic reconnection and NAT traversal (LiveKit TURN)
+- Google sign-in (Firebase) + optional server-verified identity, or guest mode
+- Create / join rooms by code
+- Multi-party audio/video via SFU; mute, camera on/off, leave
+- Simulcast publishing; view/listen-only fallback if no camera/mic
+- Live remote mute & camera-off indicators
 
-## Performance knobs
+## Signaling protocol (server/index.js ⇄ client/lib/wsClient.js)
 
-In `ROOM_OPTIONS` in [client/app/room/[roomId]/page.js](client/app/room/[roomId]/page.js):
-`adaptiveStream`, `dynacast`, `publishDefaults.simulcast`, `videoCodec: "vp9"`
-(use `"av1"` for better compression, `"h264"` for widest compatibility), `red`,
-`dtx`.
+Request `{ id, method, data }` → response `{ id, ok, data }`. Server notifications
+`{ notification:true, method, data }`. Methods: `getRouterRtpCapabilities`,
+`createWebRtcTransport`, `connectWebRtcTransport`, `produce`, `getProducers`,
+`consume`, `resumeConsumer`, `pauseProducer`, `resumeProducer`. Notifications:
+`welcome`, `newProducer`, `peerClosed`, `producerPaused`, `producerResumed`,
+`consumerClosed`.
 
-## Notes
+## Tuning
 
-- `reactStrictMode` is **off** ([next.config.js](client/next.config.js)) — the
-  LiveKit `GridLayout` breaks under React 19 StrictMode double-render.
-- LiveKit tokens are short-lived (1h) and room-scoped; refresh by rejoining.
-- Firebase web config is public by design; LiveKit secrets are server-side only.
-- **`server/`** is an optional standalone Express token issuer for self-hosting or
-  LAN testing without Vercel. Not needed for the Vercel deploy. To use it, set
-  `NEXT_PUBLIC_TOKEN_ENDPOINT` to its URL.
+- `server/config.js` — codecs (VP8/H264/opus), RTC port range, bitrates, worker count.
+- `client/lib/useSfu.js` — `VIDEO_ENCODINGS` simulcast layers.
+- One mediasoup Router per room; one worker per CPU core (round-robin).

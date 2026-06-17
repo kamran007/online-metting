@@ -1,5 +1,4 @@
 import "./globals.css";
-import "@livekit/components-styles";
 import Providers from "@/components/Providers";
 
 export const metadata = {
