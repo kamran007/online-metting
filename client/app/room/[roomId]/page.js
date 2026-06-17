@@ -52,9 +52,13 @@ export default function RoomPage() {
   const [error, setError] = useState(null);
   const [guestName, setGuestName] = useState("");
 
-  // Fetch a LiveKit access token once authenticated.
+  // Fetch a LiveKit access token ONCE per (user, room). Minting again would hand
+  // LiveKitRoom a new token and force a disconnect/reconnect ("client initiated
+  // disconnect"), so we key on the stable uid and never re-mint after success.
+  const uid = user?.uid;
+  const displayName = user?.displayName;
   useEffect(() => {
-    if (!user || !room) return;
+    if (!uid || !room) return;
     let cancelled = false;
 
     (async () => {
@@ -63,7 +67,7 @@ export default function RoomPage() {
         const res = await fetch(TOKEN_ENDPOINT, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ room, name: user.displayName, idToken }),
+          body: JSON.stringify({ room, name: displayName, idToken }),
         });
         if (!res.ok) {
           const body = await res.json().catch(() => ({}));
@@ -86,7 +90,10 @@ export default function RoomPage() {
     return () => {
       cancelled = true;
     };
-  }, [user, room, getIdToken]);
+    // getIdToken/displayName intentionally omitted — fetch is keyed on uid+room
+    // and must run exactly once per join to keep the token stable.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [uid, room]);
 
   const leave = useCallback(() => router.push("/"), [router]);
 

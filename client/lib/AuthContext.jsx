@@ -1,6 +1,13 @@
 "use client";
 
-import { createContext, useContext, useEffect, useState } from "react";
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useState,
+} from "react";
 import {
   onAuthStateChanged,
   signInWithPopup,
@@ -50,9 +57,12 @@ export function AuthProvider({ children }) {
     return () => unsub();
   }, []);
 
-  const signInWithGoogle = () => signInWithPopup(auth, googleProvider);
+  const signInWithGoogle = useCallback(
+    () => signInWithPopup(auth, googleProvider),
+    []
+  );
 
-  const signInAsGuest = (name) => {
+  const signInAsGuest = useCallback((name) => {
     const trimmed = (name || "").trim() || "Guest";
     const g = {
       displayName: trimmed,
@@ -66,36 +76,39 @@ export function AuthProvider({ children }) {
       /* ignore */
     }
     setGuest(g);
-  };
+  }, []);
 
-  const signOut = async () => {
+  const signOut = useCallback(async () => {
     try {
       localStorage.removeItem(GUEST_KEY);
     } catch {
       /* ignore */
     }
     setGuest(null);
-    if (fbUser) await fbSignOut(auth);
-  };
+    if (auth.currentUser) await fbSignOut(auth);
+  }, []);
 
-  // Firebase ID token for the signaling/token server (null for guests).
-  const getIdToken = async () => {
-    try {
-      return fbUser ? await fbUser.getIdToken() : null;
-    } catch {
-      return null;
-    }
-  };
+  // Firebase ID token for the token server (null for guests).
+  const getIdToken = useCallback(
+    async () => {
+      try {
+        return fbUser ? await fbUser.getIdToken() : null;
+      } catch {
+        return null;
+      }
+    },
+    [fbUser]
+  );
 
   const user = fbUser || guest;
 
-  return (
-    <AuthContext.Provider
-      value={{ user, loading, signInWithGoogle, signInAsGuest, signOut, getIdToken }}
-    >
-      {children}
-    </AuthContext.Provider>
+  // Stable value identity — only changes when user/loading/getIdToken change.
+  const value = useMemo(
+    () => ({ user, loading, signInWithGoogle, signInAsGuest, signOut, getIdToken }),
+    [user, loading, signInWithGoogle, signInAsGuest, signOut, getIdToken]
   );
+
+  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }
 
 export const useAuth = () => useContext(AuthContext);
